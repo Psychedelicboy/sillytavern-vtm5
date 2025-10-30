@@ -1,12 +1,12 @@
 {
     "display_name": "Vampire: The Masquerade 5e",
-    "loading_order": 10,
+    "loading_order": 99,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
-    "author": "Your Name",
+    "author": "psychedelicboy",
     "version": "1.0.0",
-    "homePage": "https://github.com/your-repo/vtm5e-sillytavern",
+    "homePage": "https://github.com/Psychedelicboy/sillytavern-vtm5/blob/main/manifest.json",
     "auto_update": true
 }
