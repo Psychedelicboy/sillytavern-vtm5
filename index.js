@@ -10,10 +10,11 @@ extension_settings.vtm = extension_settings.vtm || {
 };
 
 const VTM_PLUGIN = {
-    characterData: {},
+    characterData: null,
     currentCharacterId: null,
 
     init() {
+        console.log('Initializing VTM 5e Plugin...');
         this.loadCharacterData();
         this.createCharacterSheetModal();
         this.setupEventListeners();
@@ -22,41 +23,107 @@ const VTM_PLUGIN = {
 
     loadCharacterData() {
         const characterId = this.getCurrentCharacterId();
+        console.log('Loading character data for:', characterId);
+        
         if (characterId) {
             this.currentCharacterId = characterId;
-            this.characterData = extension_settings.vtm.characterData[characterId] || this.getDefaultCharacterSheet();
+            // Ensure we have a proper data structure
+            if (extension_settings.vtm.characterData && extension_settings.vtm.characterData[characterId]) {
+                this.characterData = this.deepMerge(
+                    this.getDefaultCharacterSheet(),
+                    extension_settings.vtm.characterData[characterId]
+                );
+            } else {
+                this.characterData = this.getDefaultCharacterSheet();
+            }
+        } else {
+            console.warn('No character ID found, using default sheet');
+            this.characterData = this.getDefaultCharacterSheet();
         }
+        
+        console.log('Loaded character data:', this.characterData);
+    },
+
+    // Deep merge utility to ensure all properties exist
+    deepMerge(target, source) {
+        const result = { ...target };
+        
+        for (const key in source) {
+            if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+                result[key] = this.deepMerge(result[key] || {}, source[key]);
+            } else {
+                result[key] = source[key];
+            }
+        }
+        
+        return result;
     },
 
     saveCharacterData() {
-        if (this.currentCharacterId && extension_settings.vtm.autoSave) {
+        if (this.currentCharacterId && this.characterData && extension_settings.vtm.autoSave) {
+            if (!extension_settings.vtm.characterData) {
+                extension_settings.vtm.characterData = {};
+            }
             extension_settings.vtm.characterData[this.currentCharacterId] = this.characterData;
             saveSettingsDebounced();
+            console.log('Character data saved for:', this.currentCharacterId);
         }
     },
 
     getCurrentCharacterId() {
-        // Get current character ID from SillyTavern
-        return window.characterId || $('#character_name').data('characterId');
+        // Try multiple methods to get current character ID
+        try {
+            if (window.characterId) {
+                return window.characterId;
+            }
+            
+            const characterNameElement = $('#character_name');
+            if (characterNameElement.length) {
+                return characterNameElement.data('characterId') || characterNameElement.text() || 'default';
+            }
+            
+            // Fallback: use the current chat's character
+            const chat = $('#chat');
+            if (chat.length) {
+                return 'current_chat';
+            }
+            
+            return 'default';
+        } catch (error) {
+            console.warn('Could not get character ID, using default:', error);
+            return 'default';
+        }
     },
 
     getDefaultCharacterSheet() {
         return {
             // Basic Info
-            name: '',
+            name: 'New Vampire',
             clan: '',
-            generation: '',
+            generation: '13th',
             sire: '',
             concept: '',
             
-            // Attributes
+            // Attributes with proper nested structure
             attributes: {
-                physical: { strength: 1, dexterity: 1, stamina: 1 },
-                social: { charisma: 1, manipulation: 1, composure: 1 },
-                mental: { intelligence: 1, wits: 1, resolve: 1 }
+                physical: { 
+                    strength: 1, 
+                    dexterity: 1, 
+                    stamina: 1 
+                },
+                social: { 
+                    charisma: 1, 
+                    manipulation: 1, 
+                    composure: 1 
+                },
+                mental: { 
+                    intelligence: 1, 
+                    wits: 1, 
+                    resolve: 1 
+                }
             },
             
-            // Skills
+            // Skills with proper nested structure
             skills: {
                 physical: {
                     athletics: 0, brawl: 0, drive: 0, firearms: 0, 
@@ -88,13 +155,21 @@ const VTM_PLUGIN = {
             ambition: '',
             desire: '',
             convictions: [],
-            touchstones: []
+            touchstones: [],
+            
+            // Ensure all required fields exist
+            _initialized: true
         };
     },
 
     createCharacterSheetModal() {
+        console.log('Creating character sheet modal...');
+        
+        // Remove existing modal if it exists
+        $('#vtm_character_modal').remove();
+        
         const modalHtml = `
-        <div id="vtm_character_modal" class="modal">
+        <div id="vtm_character_modal" class="modal" style="display: none;">
             <div class="modal-content vtm-character-sheet" style="max-width: 800px;">
                 <span class="close">&times;</span>
                 <h2>Vampire: The Masquerade Character Sheet</h2>
@@ -107,19 +182,19 @@ const VTM_PLUGIN = {
                 </div>
                 
                 <div id="vtm-core-tab" class="vtm-tab-content active">
-                    ${this.renderCoreTab()}
+                    <!-- Content will be rendered dynamically -->
                 </div>
                 
                 <div id="vtm-skills-tab" class="vtm-tab-content">
-                    ${this.renderSkillsTab()}
+                    <!-- Content will be rendered dynamically -->
                 </div>
                 
                 <div id="vtm-advantages-tab" class="vtm-tab-content">
-                    ${this.renderAdvantagesTab()}
+                    <!-- Content will be rendered dynamically -->
                 </div>
                 
                 <div id="vtm-background-tab" class="vtm-tab-content">
-                    ${this.renderBackgroundTab()}
+                    <!-- Content will be rendered dynamically -->
                 </div>
                 
                 <div style="margin-top: 20px; text-align: center;">
@@ -132,50 +207,67 @@ const VTM_PLUGIN = {
         
         $('body').append(modalHtml);
         this.setupModalEvents();
+        this.refreshSheet(); // Initial render
+        console.log('Character sheet modal created');
     },
 
     renderCoreTab() {
+        // Ensure attributes exist
+        if (!this.characterData.attributes) {
+            this.characterData.attributes = this.getDefaultCharacterSheet().attributes;
+        }
+        
         const attrs = this.characterData.attributes;
         return `
         <div class="vtm-grid">
             <div class="vtm-section">
                 <h3>Basic Info</h3>
-                <input type="text" id="vtm_name" placeholder="Character Name" value="${this.characterData.name || ''}">
-                <input type="text" id="vtm_clan" placeholder="Clan" value="${this.characterData.clan || ''}">
-                <input type="text" id="vtm_generation" placeholder="Generation" value="${this.characterData.generation || ''}">
+                <input type="text" id="vtm_name" placeholder="Character Name" value="${this.escapeHtml(this.characterData.name || '')}">
+                <input type="text" id="vtm_clan" placeholder="Clan" value="${this.escapeHtml(this.characterData.clan || '')}">
+                <input type="text" id="vtm_generation" placeholder="Generation" value="${this.escapeHtml(this.characterData.generation || '')}">
             </div>
             
             <div class="vtm-section">
                 <h3>Physical Attributes</h3>
-                ${this.renderAttribute('strength', attrs.physical.strength)}
-                ${this.renderAttribute('dexterity', attrs.physical.dexterity)}
-                ${this.renderAttribute('stamina', attrs.physical.stamina)}
+                ${this.renderAttribute('strength', attrs.physical?.strength || 1)}
+                ${this.renderAttribute('dexterity', attrs.physical?.dexterity || 1)}
+                ${this.renderAttribute('stamina', attrs.physical?.stamina || 1)}
             </div>
             
             <div class="vtm-section">
                 <h3>Social Attributes</h3>
-                ${this.renderAttribute('charisma', attrs.social.charisma)}
-                ${this.renderAttribute('manipulation', attrs.social.manipulation)}
-                ${this.renderAttribute('composure', attrs.social.composure)}
+                ${this.renderAttribute('charisma', attrs.social?.charisma || 1)}
+                ${this.renderAttribute('manipulation', attrs.social?.manipulation || 1)}
+                ${this.renderAttribute('composure', attrs.social?.composure || 1)}
             </div>
             
             <div class="vtm-section">
                 <h3>Mental Attributes</h3>
-                ${this.renderAttribute('intelligence', attrs.mental.intelligence)}
-                ${this.renderAttribute('wits', attrs.mental.wits)}
-                ${this.renderAttribute('resolve', attrs.mental.resolve)}
+                ${this.renderAttribute('intelligence', attrs.mental?.intelligence || 1)}
+                ${this.renderAttribute('wits', attrs.mental?.wits || 1)}
+                ${this.renderAttribute('resolve', attrs.mental?.resolve || 1)}
             </div>
         </div>
         `;
     },
 
+    escapeHtml(unsafe) {
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    },
+
     renderAttribute(name, value) {
+        const safeValue = Math.max(1, Math.min(5, value || 1)); // Ensure value is between 1-5
         return `
         <div class="vtm-attribute">
             <span>${name.charAt(0).toUpperCase() + name.slice(1)}</span>
             <div class="vtm-dot-rating" data-attribute="${name}">
                 ${Array.from({length: 5}, (_, i) => 
-                    `<div class="vtm-dot ${i < value ? 'filled' : ''}" data-value="${i + 1}"></div>`
+                    `<div class="vtm-dot ${i < safeValue ? 'filled' : ''}" data-value="${i + 1}"></div>`
                 ).join('')}
             </div>
         </div>
@@ -183,29 +275,47 @@ const VTM_PLUGIN = {
     },
 
     renderSkillsTab() {
-        // Implementation for skills and disciplines
-        return `<h3>Skills & Disciplines Content</h3>`;
+        return `
+        <div class="vtm-section">
+            <h3>Skills</h3>
+            <p>Skills interface coming soon...</p>
+            <p>Physical Skills: ${Object.keys(this.characterData.skills?.physical || {}).join(', ')}</p>
+            <p>Social Skills: ${Object.keys(this.characterData.skills?.social || {}).join(', ')}</p>
+            <p>Mental Skills: ${Object.keys(this.characterData.skills?.mental || {}).join(', ')}</p>
+        </div>
+        <div class="vtm-section">
+            <h3>Disciplines</h3>
+            <p>Disciplines interface coming soon...</p>
+        </div>
+        `;
     },
 
     renderAdvantagesTab() {
+        const hunger = this.characterData.hunger || 0;
+        const willpower = this.characterData.willpower || 0;
+        const willpowerMax = this.characterData.willpowerMax || 5;
+        const humanity = this.characterData.humanity || 7;
+        const healthMax = this.characterData.healthMax || 3;
+        const healthStatus = this.characterData.healthStatus || ['healthy', 'healthy', 'healthy'];
+        
         return `
         <div class="vtm-grid">
             <div class="vtm-section">
                 <h3>Resources</h3>
                 <div class="vtm-resource">
-                    <label>Hunger: ${this.characterData.hunger || 0}</label>
+                    <label>Hunger: ${hunger}</label>
                     <div class="vtm-dot-rating" data-resource="hunger">
                         ${Array.from({length: 5}, (_, i) => 
-                            `<div class="vtm-dot ${i < (this.characterData.hunger || 0) ? 'filled' : ''}" data-value="${i + 1}"></div>`
+                            `<div class="vtm-dot ${i < hunger ? 'filled' : ''}" data-value="${i + 1}"></div>`
                         ).join('')}
                     </div>
                 </div>
                 
                 <div class="vtm-resource">
-                    <label>Willpower: ${this.characterData.willpower || 0}/${this.characterData.willpowerMax || 5}</label>
+                    <label>Willpower: ${willpower}/${willpowerMax}</label>
                     <div class="vtm-resource-track">
-                        ${Array.from({length: (this.characterData.willpowerMax || 5)}, (_, i) => 
-                            `<div class="vtm-willpower-box ${i < (this.characterData.willpower || 0) ? 'filled' : ''}"></div>`
+                        ${Array.from({length: willpowerMax}, (_, i) => 
+                            `<div class="vtm-willpower-box ${i < willpower ? 'filled' : ''}"></div>`
                         ).join('')}
                     </div>
                 </div>
@@ -213,56 +323,81 @@ const VTM_PLUGIN = {
                 <div class="vtm-resource">
                     <label>Health</label>
                     <div class="vtm-resource-track">
-                        ${Array.from({length: (this.characterData.healthMax || 3)}, (_, i) => {
-                            const status = (this.characterData.healthStatus || [])[i] || 'healthy';
-                            return `<div class="vtm-health-box ${status}"></div>`;
+                        ${Array.from({length: healthMax}, (_, i) => {
+                            const status = healthStatus[i] || 'healthy';
+                            return `<div class="vtm-health-box ${status}" title="${status}"></div>`;
                         }).join('')}
                     </div>
                 </div>
             </div>
             
             <div class="vtm-section">
-                <h3>Humanity: ${this.characterData.humanity || 7}</h3>
+                <h3>Humanity: ${humanity}</h3>
                 <div class="vtm-dot-rating" data-resource="humanity">
                     ${Array.from({length: 10}, (_, i) => 
-                        `<div class="vtm-dot ${i < (this.characterData.humanity || 0) ? 'filled' : ''}" data-value="${i + 1}"></div>`
+                        `<div class="vtm-dot ${i < humanity ? 'filled' : ''}" data-value="${i + 1}"></div>`
                     ).join('')}
                 </div>
+                <p><small>Higher is better - represents your connection to humanity</small></p>
             </div>
         </div>
         `;
     },
 
     renderBackgroundTab() {
-        return `<h3>Background Content</h3>`;
+        return `
+        <div class="vtm-section">
+            <h3>Character Background</h3>
+            <p>Background information interface coming soon...</p>
+            <p>Predator Type: ${this.characterData.predatorType || 'Not set'}</p>
+            <p>Ambition: ${this.characterData.ambition || 'Not set'}</p>
+            <p>Desire: ${this.characterData.desire || 'Not set'}</p>
+        </div>
+        `;
     },
 
     setupModalEvents() {
+        console.log('Setting up modal events...');
+        
+        // Close modal when X is clicked
         $('#vtm_character_modal .close').on('click', () => {
             $('#vtm_character_modal').hide();
         });
         
-        $('.vtm-tab').on('click', (e) => {
+        // Close modal when clicking outside
+        $(window).on('click', (e) => {
+            if (e.target.id === 'vtm_character_modal') {
+                $('#vtm_character_modal').hide();
+            }
+        });
+        
+        // Tab switching
+        $('.vtm-tab').off('click').on('click', (e) => {
             const tab = $(e.target).data('tab');
             this.switchTab(tab);
         });
         
-        $('#vtm_save_sheet').on('click', () => {
+        // Save sheet
+        $('#vtm_save_sheet').off('click').on('click', () => {
             this.saveSheetData();
             this.saveCharacterData();
+            this.showNotification('Character sheet saved!');
         });
         
-        $('#vtm_quick_roll').on('click', () => {
+        // Quick roll
+        $('#vtm_quick_roll').off('click').on('click', () => {
             this.showRollDialog();
         });
         
         // Dot rating clicks
-        $(document).on('click', '.vtm-dot-rating .vtm-dot', (e) => {
+        $(document).off('click', '.vtm-dot-rating .vtm-dot').on('click', '.vtm-dot-rating .vtm-dot', (e) => {
             const dot = $(e.target);
             const ratingContainer = dot.closest('.vtm-dot-rating');
-            const value = dot.data('value');
+            const value = parseInt(dot.data('value'));
             const attribute = ratingContainer.data('attribute');
             const resource = ratingContainer.data('resource');
+            
+            console.log('Dot clicked:', { attribute, resource, value });
             
             if (attribute) {
                 this.updateAttribute(attribute, value);
@@ -270,21 +405,63 @@ const VTM_PLUGIN = {
                 this.updateResource(resource, value);
             }
         });
+        
+        console.log('Modal events setup complete');
+    },
+
+    showNotification(message) {
+        // Simple notification system
+        const notification = $(`<div class="vtm-notification">${message}</div>`);
+        $('body').append(notification);
+        
+        notification.css({
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            background: '#8b0000',
+            color: 'white',
+            padding: '10px 20px',
+            borderRadius: '5px',
+            zIndex: 10000
+        });
+        
+        setTimeout(() => {
+            notification.fadeOut(() => notification.remove());
+        }, 3000);
     },
 
     switchTab(tabName) {
+        console.log('Switching to tab:', tabName);
         $('.vtm-tab').removeClass('active');
         $('.vtm-tab-content').removeClass('active');
         $(`.vtm-tab[data-tab="${tabName}"]`).addClass('active');
         $(`#vtm-${tabName}-tab`).addClass('active');
+        this.refreshTab(tabName);
+    },
+
+    refreshTab(tabName) {
+        const tabContent = $(`#vtm-${tabName}-tab`);
+        if (tabContent.length) {
+            tabContent.html(this[`render${tabName.charAt(0).toUpperCase() + tabName.slice(1)}Tab`]());
+        }
+    },
+
+    refreshSheet() {
+        console.log('Refreshing character sheet...');
+        const activeTab = $('.vtm-tab.active').data('tab') || 'core';
+        this.refreshTab(activeTab);
     },
 
     updateAttribute(attribute, value) {
+        console.log('Updating attribute:', attribute, value);
+        
         // Find which category the attribute belongs to
         const categories = ['physical', 'social', 'mental'];
         for (const category of categories) {
-            if (this.characterData.attributes[category][attribute] !== undefined) {
+            if (this.characterData.attributes[category] && 
+                this.characterData.attributes[category][attribute] !== undefined) {
                 this.characterData.attributes[category][attribute] = value;
+                console.log(`Updated ${category}.${attribute} to ${value}`);
                 break;
             }
         }
@@ -292,26 +469,27 @@ const VTM_PLUGIN = {
     },
 
     updateResource(resource, value) {
+        console.log('Updating resource:', resource, value);
         this.characterData[resource] = value;
         this.refreshSheet();
     },
 
-    refreshSheet() {
-        // Re-render the current tab
-        const activeTab = $('.vtm-tab.active').data('tab');
-        $(`#vtm-${activeTab}-tab`).html(this[`render${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}Tab`]());
-    },
-
     saveSheetData() {
-        this.characterData.name = $('#vtm_name').val();
-        this.characterData.clan = $('#vtm_clan').val();
-        this.characterData.generation = $('#vtm_generation').val();
-        // Save other fields as needed
+        console.log('Saving sheet data...');
+        this.characterData.name = $('#vtm_name').val() || 'Unnamed Vampire';
+        this.characterData.clan = $('#vtm_clan').val() || '';
+        this.characterData.generation = $('#vtm_generation').val() || '13th';
+        console.log('Sheet data saved:', this.characterData);
     },
 
     showRollDialog() {
+        console.log('Showing roll dialog...');
+        
+        // Remove existing dialog
+        $('#vtm_roll_dialog').remove();
+        
         const rollDialog = `
-        <div id="vtm_roll_dialog" class="modal">
+        <div id="vtm_roll_dialog" class="modal" style="display: none;">
             <div class="modal-content" style="max-width: 500px;">
                 <span class="close">&times;</span>
                 <h3>VTM Dice Roll</h3>
@@ -351,9 +529,17 @@ const VTM_PLUGIN = {
             $('#vtm_roll_dialog').remove();
         });
         
-        $('#vtm_roll_now').on('click', () => {
+        $(window).on('click', (e) => {
+            if (e.target.id === 'vtm_roll_dialog') {
+                $('#vtm_roll_dialog').remove();
+            }
+        });
+        
+        $('#vtm_roll_now').off('click').on('click', () => {
             this.performRoll();
         });
+        
+        console.log('Roll dialog shown');
     },
 
     performRoll() {
@@ -361,6 +547,8 @@ const VTM_PLUGIN = {
         const difficulty = parseInt($('#vtm_difficulty').val()) || 2;
         const useWillpower = $('#vtm_willpower_reroll').is(':checked');
         const hunger = this.characterData.hunger || 0;
+        
+        console.log('Performing roll:', { pool, difficulty, useWillpower, hunger });
         
         const result = this.rollV5Dice(pool, difficulty, hunger, useWillpower);
         this.displayRollResult(result);
@@ -401,7 +589,7 @@ const VTM_PLUGIN = {
             if (roll >= 6) results.successes++;
             if (roll === 10) {
                 results.criticals++;
-                if (roll === 10) results.messyCritical = true;
+                results.messyCritical = true;
             }
             if (roll === 1) results.bestialFailure = true;
         }
@@ -459,20 +647,32 @@ const VTM_PLUGIN = {
     },
 
     sendToChat(message) {
-        // Implementation to send message to SillyTavern chat
-        if (window.sendSystemMessage) {
-            window.sendSystemMessage(message);
-        } else {
-            // Fallback: add to chat manually
-            const chat = $('#chat');
-            chat.append(`<div class="system_message">${message}</div>`);
-            chat.scrollTop(chat[0].scrollHeight);
+        try {
+            // Try to use SillyTavern's system message function
+            if (window.sendSystemMessage) {
+                window.sendSystemMessage(message);
+            } else {
+                // Fallback: add to chat manually
+                const chat = $('#chat');
+                if (chat.length) {
+                    chat.append(`<div class="system_message">${message}</div>`);
+                    chat.scrollTop(chat[0].scrollHeight);
+                } else {
+                    console.log('VTM Roll Result:', message);
+                }
+            }
+        } catch (error) {
+            console.error('Error sending message to chat:', error);
+            console.log('VTM Roll Result (fallback):', message);
         }
     },
 
     setupEventListeners() {
+        console.log('Setting up event listeners...');
+        
         // Open character sheet when VTM button is clicked
         $(document).on('click', '#vtm_sheet', () => {
+            console.log('VTM sheet button clicked');
             this.loadCharacterData();
             $('#vtm_character_modal').show();
         });
@@ -480,8 +680,11 @@ const VTM_PLUGIN = {
         // Handle dice dropdown options
         $(document).on('click', '#vtm_dice_dropdown .list-group-item', (e) => {
             const action = $(e.target).data('value');
+            console.log('Dice action selected:', action);
             this.handleDiceAction(action);
         });
+        
+        console.log('Event listeners setup complete');
     },
 
     handleDiceAction(action) {
@@ -498,115 +701,9 @@ const VTM_PLUGIN = {
             case 'custom_pool':
                 this.showRollDialog();
                 break;
+            default:
+                console.log('Unknown dice action:', action);
         }
-    },
-
-    showSkillRollDialog() {
-        // Advanced dialog for skill selection
-        const dialog = `
-        <div id="vtm_skill_roll" class="modal">
-            <div class="modal-content" style="max-width: 600px;">
-                <span class="close">&times;</span>
-                <h3>Skill Check</h3>
-                
-                <div class="vtm-grid">
-                    <div class="vtm-section">
-                        <h4>Attribute</h4>
-                        <select id="vtm_roll_attribute">
-                            <option value="strength">Strength</option>
-                            <option value="dexterity">Dexterity</option>
-                            <option value="stamina">Stamina</option>
-                            <option value="charisma">Charisma</option>
-                            <option value="manipulation">Manipulation</option>
-                            <option value="composure">Composure</option>
-                            <option value="intelligence">Intelligence</option>
-                            <option value="wits">Wits</option>
-                            <option value="resolve">Resolve</option>
-                        </select>
-                    </div>
-                    
-                    <div class="vtm-section">
-                        <h4>Skill</h4>
-                        <select id="vtm_roll_skill">
-                            <option value="athletics">Athletics</option>
-                            <option value="brawl">Brawl</option>
-                            <option value="firearms">Firearms</option>
-                            <option value="persuasion">Persuasion</option>
-                            <option value="intimidation">Intimidation</option>
-                            <option value="investigation">Investigation</option>
-                            <option value="stealth">Stealth</option>
-                            <!-- Add more skills -->
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="vtm-section">
-                    <label>Difficulty:</label>
-                    <select id="vtm_skill_difficulty">
-                        <option value="1">1 - Simple</option>
-                        <option value="2" selected>2 - Standard</option>
-                        <option value="3">3 - Challenging</option>
-                        <option value="4">4 - Difficult</option>
-                        <option value="5">5 - Extreme</option>
-                    </select>
-                </div>
-                
-                <div style="text-align: center; margin-top: 20px;">
-                    <button id="vtm_roll_skill_check" class="vtm-roll-button">Roll Skill Check</button>
-                </div>
-            </div>
-        </div>
-        `;
-        
-        $('body').append(dialog);
-        $('#vtm_skill_roll').show();
-        
-        $('#vtm_skill_roll .close').on('click', () => {
-            $('#vtm_skill_roll').remove();
-        });
-        
-        $('#vtm_roll_skill_check').on('click', () => {
-            const attribute = $('#vtm_roll_attribute').val();
-            const skill = $('#vtm_roll_skill').val();
-            const difficulty = parseInt($('#vtm_skill_difficulty').val());
-            
-            this.performSkillCheck(attribute, skill, difficulty);
-            $('#vtm_skill_roll').remove();
-        });
-    },
-
-    performSkillCheck(attribute, skill, difficulty) {
-        const attrValue = this.getAttributeValue(attribute);
-        const skillValue = this.getSkillValue(skill);
-        const pool = attrValue + skillValue;
-        const hunger = this.characterData.hunger || 0;
-        
-        const result = this.rollV5Dice(pool, difficulty, hunger, false);
-        
-        let output = `🎲 **${attribute.charAt(0).toUpperCase() + attribute.slice(1)} + ${skill.charAt(0).toUpperCase() + skill.slice(1)} Check**\n`;
-        output += `Pool: ${pool} (${attrValue} + ${skillValue}), Difficulty: ${difficulty}\n\n`;
-        
-        // Add the roll result display
-        output += this.formatRollResult(result);
-        
-        this.sendToChat(output);
-    },
-
-    getAttributeValue(attribute) {
-        const categories = ['physical', 'social', 'mental'];
-        for (const category of categories) {
-            if (this.characterData.attributes[category][attribute] !== undefined) {
-                return this.characterData.attributes[category][attribute];
-            }
-        }
-        return 1;
-    },
-
-    getSkillValue(skill) {
-        // Implementation to get skill value from character data
-        return this.characterData.skills?.physical[skill] || 
-               this.characterData.skills?.social[skill] || 
-               this.characterData.skills?.mental[skill] || 0;
     },
 
     performRouseCheck() {
@@ -625,55 +722,37 @@ const VTM_PLUGIN = {
     },
 
     performFrenzyCheck() {
-        const pool = (this.characterData.attributes.social.composure || 1) + (this.characterData.attributes.mental.resolve || 1);
+        const composure = this.characterData.attributes?.social?.composure || 1;
+        const resolve = this.characterData.attributes?.mental?.resolve || 1;
+        const pool = composure + resolve;
         const hungerDice = Math.min(this.characterData.hunger || 0, pool);
         
         let output = `😡 **Frenzy Check**\n`;
-        output += `Pool: Composure + Resolve = ${pool}, Hunger Dice: ${hungerDice}\n`;
+        output += `Pool: Composure (${composure}) + Resolve (${resolve}) = ${pool}, Hunger Dice: ${hungerDice}\n`;
         
-        // Simplified frenzy check
         const result = this.rollV5Dice(pool, 3, hungerDice, false);
-        output += this.formatRollResult(result);
         
-        if (result.outcome === 'Failure' || result.outcome === 'Bestial Failure') {
-            output += `\n\n💥 **Frenzy!** The Beast takes control.`;
+        output += `\n**Result:** ${result.successes} successes vs Difficulty 3\n`;
+        
+        if (result.successes < 3) {
+            output += `\n💥 **Frenzy!** The Beast takes control.`;
         } else {
-            output += `\n\n✅ **Resisted!** You maintain control.`;
+            output += `\n✅ **Resisted!** You maintain control.`;
         }
         
         this.sendToChat(output);
-    },
-
-    formatRollResult(result) {
-        let output = `**Regular Dice:** `;
-        result.regular.forEach(roll => {
-            const dieClass = roll >= 6 ? 'success' : roll === 10 ? 'critical' : '';
-            output += `<span class="vtm-dice regular ${dieClass}">${roll}</span>`;
-        });
-        
-        output += `\n**Hunger Dice:** `;
-        result.hunger.forEach(roll => {
-            const dieClass = roll >= 6 ? 'success' : roll === 10 ? 'critical' : '';
-            output += `<span class="vtm-dice hunger ${dieClass}">${roll}</span>`;
-        });
-        
-        output += `\n\n**Successes:** ${result.successes} | **Result:** ${result.outcome}`;
-        
-        if (result.messyCritical) {
-            output += `\n⚠️ **Messy Critical!**`;
-        }
-        
-        if (result.bestialFailure) {
-            output += `\n💀 **Bestial Failure!**`;
-        }
-        
-        return output;
     }
 };
 
 // Initialize plugin when document is ready
 jQuery(() => {
-    VTM_PLUGIN.init();
+    console.log('Document ready, initializing VTM plugin...');
+    setTimeout(() => {
+        VTM_PLUGIN.init();
+    }, 1000); // Small delay to ensure everything is loaded
 });
+
+// Export for potential external use
+window.VTM_PLUGIN = VTM_PLUGIN;
 
 export default VTM_PLUGIN;
